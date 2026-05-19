@@ -12,16 +12,11 @@ class IsSuperAdmin(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        # ✅ Verificar ambos campos para máxima compatibilidad
-        return (
+        # Verificar ambos campos para máxima compatibilidad
+        return bool(
             getattr(request.user, 'is_super_admin', False) or 
-            request.user.is_superuser or
-            request.user.is_staff
+            request.user.is_superuser
         )
-    
-    def has_object_permission(self, request, view, obj):
-        # Super Admin puede acceder a cualquier objeto
-        return self.has_permission(request, view)
 
 
 class IsBusinessAdmin(BasePermission):
@@ -37,12 +32,12 @@ class IsBusinessAdmin(BasePermission):
             return True
         
         # Verificar membresía como ADMIN
-        business = getattr(request, 'business', None)
-        if not business:
-            return False
-        
         try:
             from apps.business.models import Membership
+            business = getattr(request, 'business', None)
+            if not business:
+                return False
+            
             return Membership.objects.filter(
                 user=request.user, 
                 business=business,
@@ -64,12 +59,12 @@ class IsVendedor(BasePermission):
         if getattr(request.user, 'is_super_admin', False) or request.user.is_superuser:
             return True
         
-        business = getattr(request, 'business', None)
-        if not business:
-            return False
-        
         try:
             from apps.business.models import Membership
+            business = getattr(request, 'business', None)
+            if not business:
+                return False
+            
             return Membership.objects.filter(
                 user=request.user, 
                 business=business,
@@ -91,12 +86,12 @@ class IsCliente(BasePermission):
         if getattr(request.user, 'is_super_admin', False) or request.user.is_superuser:
             return True
         
-        business = getattr(request, 'business', None)
-        if not business:
-            return False
-        
         try:
             from apps.business.models import Membership
+            business = getattr(request, 'business', None)
+            if not business:
+                return False
+            
             return Membership.objects.filter(
                 user=request.user, 
                 business=business, 
