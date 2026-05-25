@@ -1,8 +1,13 @@
-from django.urls import path
-from .views import BusinessCreateListView, MembershipAssignView, MembershipListView
+# apps/business/urls.py
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import BusinessViewSet, MembershipViewSet
+
+router = DefaultRouter()
+router.register(r'', BusinessViewSet, basename='business')
+router.register(r'memberships', MembershipViewSet, basename='membership')
 
 urlpatterns = [
-    path('', BusinessCreateListView.as_view(), name='business-list-create'),
-    path('membership/', MembershipListView.as_view(), name='membership-list'),
-    path('membership/assign/', MembershipAssignView.as_view(), name='membership-assign'),
+    path('', include(router.urls)),
 ]
