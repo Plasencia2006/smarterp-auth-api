@@ -2,7 +2,6 @@ import uuid
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
-
 class CustomUser(AbstractUser):
 
     class Estado(models.TextChoices):
@@ -33,3 +32,11 @@ class CustomUser(AbstractUser):
     @property
     def is_active_user(self):
         return self.estado == self.Estado.ACTIVO and self.is_active
+    
+    # Agrega este campo al final de tu clase CustomUser
+    usiness_roles = models.ManyToManyField(
+        'business_roles.BusinessRole',  # 🔑 Usa string reference con app_label
+        related_name='users',
+        blank=True,
+        verbose_name='Roles de Negocio'
+    )

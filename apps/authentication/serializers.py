@@ -9,11 +9,11 @@ User = get_user_model()
 
 
 # =============================================================================
-# ✅ 1. SERIALIZER PARA LOGIN (JWT) - CON MEMBRESÍAS
+# ✅ 1. SERIALIZER PARA LOGIN (JWT) - CON MEMBRESÍAS, ROLES Y PERMISOS
 # =============================================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Login con JWT - Incluye datos del usuario y sus negocios asignados
+    Login con JWT - Incluye datos del usuario, negocios, roles y permisos
     """
     
     @classmethod
@@ -54,33 +54,97 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'detail': 'Esta cuenta ha sido eliminada del sistema.'
             })
         
-        # ✅ CONSULTAR MEMBRESÍAS DEL USUARIO (NEGOCIOS ASIGNADOS)
-        try:
-            from apps.business.models import Membership
-            
-            memberships = Membership.objects.filter(
-                user=user,
-                is_active=True
-            ).select_related('business')
-            
-            # Serializar membresías
-            memberships_data = []
-            for m in memberships:
-                memberships_data.append({
-                    'id': str(m.id),
-                    'business': str(m.business.id),  # ← CLAVE: debe ser 'business'
-                    'business_name': m.business.name,
-                    'role': m.role,
-                    'is_active': m.is_active
-                })
-            
-            print(f"✅ [Login] Usuario {user.email} tiene {len(memberships_data)} negocios asignados")
-            
-        except Exception as e:
-            print(f"❌ [Login] Error al obtener membresías: {e}")
-            memberships_data = []
+        # ✅ EXTRAER ROLES Y PERMISOS REALES DEL USUARIO
+        from apps.business.models import Membership
+        from apps.business_roles.models import BusinessRole
         
-        # ✅ CONSTRUIR RESPUESTA CON MEMBRESÍAS
+        memberships_data = []
+        all_permissions = []
+        all_roles = []
+
+        # Buscar membresías activas del usuario
+        memberships = Membership.objects.filter(
+            user=user, 
+            is_active=True
+        ).select_related('business')
+        
+        for m in memberships:
+            # 1️⃣ Buscar roles asignados al usuario en este negocio
+            user_roles = BusinessRole.objects.filter(
+                users=user, 
+                business=m.business
+            ).prefetch_related('permissions')
+            
+            roles_serialized = []
+            
+            for role in user_roles:
+                perms = [
+                    {
+                        'code': p.code, 
+                        'name': p.name, 
+                        'module': p.module
+                    }
+                    for p in role.permissions.all()
+                ]
+                roles_serialized.append({
+                    'id': str(role.id),
+                    'name': role.name,
+                    'description': role.description,
+                    'is_default': role.is_default,
+                    'permissions': perms
+                })
+                all_permissions.extend(perms)
+            
+            # 2️⃣ Si no tiene roles ManyToMany, usar el rol string de la membresía (Fallback)
+            if not user_roles and m.role:
+                default_role = BusinessRole.objects.filter(
+                    business=m.business, 
+                    name__iexact=m.role, 
+                    is_default=True
+                ).prefetch_related('permissions').first()
+                
+                if default_role:
+                    perms = [
+                        {
+                            'code': p.code, 
+                            'name': p.name, 
+                            'module': p.module
+                        }
+                        for p in default_role.permissions.all()
+                    ]
+                    roles_serialized.append({
+                        'id': str(default_role.id),
+                        'name': default_role.name,
+                        'description': default_role.description,
+                        'is_default': default_role.is_default,
+                        'permissions': perms
+                    })
+                    all_permissions.extend(perms)
+
+            memberships_data.append({
+                'id': str(m.id),
+                'business': str(m.business.id),
+                'business_name': m.business.name,
+                'membership_role': m.role,
+                'is_active': m.is_active,
+                'roles': roles_serialized
+            })
+            
+            all_roles.extend(roles_serialized)
+
+        # Eliminar duplicados de permisos (por código)
+        seen_codes = set()
+        unique_permissions = []
+        for perm in all_permissions:
+            if perm['code'] not in seen_codes:
+                unique_permissions.append(perm)
+                seen_codes.add(perm['code'])
+
+        print(f"✅ [Login] Usuario {user.email} tiene {len(memberships_data)} negocios asignados")
+        print(f"✅ [Login] Total de roles: {len(all_roles)}")
+        print(f"✅ [Login] Total de permisos únicos: {len(unique_permissions)}")
+        
+        # ✅ CONSTRUIR RESPUESTA COMPLETA
         data['user'] = {
             'id': str(user.id),
             'email': user.email,
@@ -90,9 +154,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'is_super_admin': getattr(user, 'is_super_admin', False) or user.is_superuser,
             'estado': estado,
             'is_active': is_active,
-            # ✅ CAMPOS CLAVE PARA EL FRONTEND:
-            'business_memberships': memberships_data,  # ← Prioritario
-            'memberships': memberships_data,  # ← Fallback
+            'business_memberships': memberships_data,  # ← Para saber a qué negocios pertenece
+            'roles': all_roles,                        # ← Para saber qué roles tiene
+            'permissions': unique_permissions          # ← Para redirección y UI (CLAVE)
         }
         
         return data

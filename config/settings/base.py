@@ -15,6 +15,7 @@ DJANGO_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'apps.business_roles',
 ]
 
 THIRD_PARTY_APPS = [

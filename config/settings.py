@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apps.backups',
     'apps.analytics',
     'apps.audit',
+    'apps.business_roles',
 ]
 
 MIDDLEWARE = [

@@ -2,11 +2,14 @@
 
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import BusinessViewSet, MembershipViewSet
+from .views import BusinessViewSet, MembershipViewSet, BusinessUserViewSet
 
 router = DefaultRouter()
-router.register(r'', BusinessViewSet, basename='business')
+
+# ✅ CAMBIO CLAVE: Registrar con prefijo 'businesses'
+router.register(r'businesses', BusinessViewSet, basename='business')
 router.register(r'memberships', MembershipViewSet, basename='membership')
+router.register(r'users', BusinessUserViewSet, basename='business-user')
 
 urlpatterns = [
     path('', include(router.urls)),
