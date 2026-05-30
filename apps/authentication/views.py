@@ -6,17 +6,14 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from django.db.models import Q
-from apps.authentication.serializers import UserSerializer  # ← ✅ Ruta correcta
-from .permissions import IsSuperAdmin
-
 
 from .serializers import (
     RegisterSerializer, 
     UserDetailSerializer, 
     CustomTokenObtainPairSerializer,
-    UserSerializer
+    UserSerializer,  # ← Solo una vez
 )
-from .permissions import IsSuperAdmin
+from .permissions import IsSuperAdmin  # ← Solo una vez
 
 User = get_user_model()
 
@@ -61,29 +58,21 @@ class MeView(generics.RetrieveAPIView):
 class UserListView(generics.ListAPIView):
     """
     Lista todos los usuarios del sistema - SOLO Super Admin
-    
-    Query params:
-    - search: buscar por email, username, nombre
-    - estado: filtrar por estado (ACTIVO, INACTIVO, SUSPENDIDO)
-    - is_super_admin: filtrar por rol
-    - ordering: ordenar por campo (ej: -date_joined)
     """
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsSuperAdmin]
     
-    # ✅ Filtros y búsqueda configurados
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['estado', 'is_active', 'is_superuser']
     search_fields = ['email', 'username', 'first_name', 'last_name']
     ordering_fields = ['date_joined', 'username', 'email', 'estado']
-    ordering = ['-date_joined']  # Orden por defecto: más recientes primero
+    ordering = ['-date_joined']
     
     def get_queryset(self):
-        queryset = User.objects.all().select_related('profile').prefetch_related(
-            'memberships__business'
-        )
+        # ✅ CORREGIDO: QuerySet simple sin relaciones que puedan no existir
+        queryset = User.objects.all()
         
-        # ✅ Búsqueda personalizada (OR entre campos)
+        # ✅ Búsqueda personalizada
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -93,7 +82,7 @@ class UserListView(generics.ListAPIView):
                 Q(last_name__icontains=search)
             )
         
-        # ✅ Filtro por estado personalizado
+        # ✅ Filtro por estado
         estado = self.request.query_params.get('estado', None)
         if estado:
             queryset = queryset.filter(estado__iexact=estado)
@@ -101,7 +90,6 @@ class UserListView(generics.ListAPIView):
         return queryset
     
     def list(self, request, *args, **kwargs):
-        """Override para agregar metadata útil"""
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         
@@ -111,11 +99,10 @@ class UserListView(generics.ListAPIView):
         
         serializer = self.get_serializer(queryset, many=True)
         
-        # ✅ Respuesta con metadata para el frontend
         return Response({
             'results': serializer.data,
             'count': queryset.count(),
-            'next': None,  # Si usas paginación, esto se llena automáticamente
+            'next': None,
             'previous': None,
         })
 

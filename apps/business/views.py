@@ -276,3 +276,4 @@ class BusinessUserViewSet(viewsets.ReadOnlyModelViewSet):
             })
         
         return Response(data, status=status.HTTP_200_OK)
+    
