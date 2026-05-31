@@ -216,20 +216,21 @@ class UserSerializer(serializers.ModelSerializer):
 # ✅ 4. SERIALIZER PARA DETALLE DE PERFIL (/me/)
 # =============================================================================
 class UserDetailSerializer(serializers.ModelSerializer):
-    """Serializador para perfil del usuario actual"""
-    is_super_admin = serializers.SerializerMethodField()
-    
     class Meta:
-        model = User
-        fields = (
-            'id', 'username', 'email', 'first_name', 'last_name',
-            'is_active', 'estado', 'is_super_admin', 'date_joined', 'last_login'
-        )
-        read_only_fields = ('id', 'date_joined', 'last_login')
-
-    def get_is_super_admin(self, obj):
-        return getattr(obj, 'is_super_admin', False) or obj.is_superuser
-
+        model = User  # ← CAMBIA 'CustomUser' POR 'User'
+        fields = [
+            'id', 'email', 'username', 'first_name', 'last_name',
+            'is_active', 'is_super_admin',
+            'last_login', 'date_joined'
+        ]
+        read_only_fields = ['id', 'last_login', 'date_joined']
+    
+    def update(self, instance, validated_data):
+        if 'is_super_admin' in validated_data:
+            instance.is_super_admin = validated_data['is_super_admin']
+            instance.save(update_fields=['is_super_admin'])
+        
+        return super().update(instance, validated_data)
 
 # =============================================================================
 # ✅ 5. SERIALIZER PARA ACTUALIZAR USUARIOS (PERMITE EDICIÓN)
