@@ -90,11 +90,24 @@ class MembershipViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(memberships, many=True)
         return Response(serializer.data)
-    
+
+        
     @action(detail=True, methods=['post'], url_path='revoke')
-    def revoke_access(self, request, pk=None):
+    def revoke_access(self, request, **kwargs):  # ← ✅ USAR **kwargs
         """Revocar acceso de un usuario a un negocio"""
+        
+        # ✅ get_object() usa lookup_field='id' automáticamente
+        # No importa si DRF pasa 'pk' o 'id' como kwarg
         membership = self.get_object()
+        
+        # Verificar permisos (opcional pero recomendado)
+        if not request.user.is_superuser and membership.business.owner != request.user:
+            return Response(
+                {'error': 'No tienes permisos para realizar esta acción'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Soft delete: desactivar en lugar de eliminar
         membership.is_active = False
         membership.save(update_fields=['is_active'])
         

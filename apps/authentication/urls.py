@@ -7,7 +7,8 @@ from .views import (
     LoginView, 
     MeView, 
     UserListView,
-    UserDetailView
+    UserDetailView,
+    UserCreateView,
 )
 
 # ✅ Router para endpoints RESTful (opcional, si quieres usar ViewSet)
@@ -25,6 +26,14 @@ urlpatterns = [
     path('users/', UserListView.as_view(), name='user-list'),
     path('users/<uuid:id>/', UserDetailView.as_view(), name='user-detail'),
     
+    # ✅ AGREGAR: Ruta para crear usuarios (POST)
+    path('users/', UserCreateView.as_view(), name='user-create'),  # ← POST
+    # ✅ UserListView ahora soporta GET y POST en la misma URL
+    path('users/', UserListView.as_view(), name='user-list-create'),
+    
+    # Ruta existente para listar usuarios (GET)
+    path('users/', UserListView.as_view(), name='user-list'),  # ← GET
     # Incluir router si se usa
     # path('', include(router.urls)),
+    
 ]

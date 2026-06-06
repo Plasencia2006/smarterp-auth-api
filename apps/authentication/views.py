@@ -19,7 +19,7 @@ User = get_user_model()
 
 
 class RegisterView(generics.CreateAPIView):
-    """Registro de nuevos usuarios"""
+    """Registro de nuevos usuarios (público)"""
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
     
@@ -55,12 +55,30 @@ class MeView(generics.RetrieveAPIView):
         return self.request.user
 
 
-class UserListView(generics.ListAPIView):
+class LoginView(TokenObtainPairView):
+    """Login con JWT - devuelve tokens + datos del usuario"""
+    serializer_class = CustomTokenObtainPairSerializer
+
+
+class MeView(generics.RetrieveAPIView):
+    """Obtener perfil del usuario actual + memberships"""
+    serializer_class = UserDetailSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self):
+        return self.request.user
+
+
+class UserListView(generics.ListCreateAPIView):
     """
-    Lista todos los usuarios del sistema - SOLO Super Admin
+    Lista y crea usuarios del sistema - SOLO Super Admin
+    GET /auth/users/  → Listar (Super Admins + Usuarios sin negocio)
+    POST /auth/users/ → Crear
     """
-    serializer_class = UserSerializer
     permission_classes = [IsAuthenticated, IsSuperAdmin]
+    
+    # ✅ AGREGAR: serializer_class por defecto (para GET)
+    serializer_class = UserSerializer
     
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['estado', 'is_active', 'is_superuser']
@@ -68,11 +86,27 @@ class UserListView(generics.ListAPIView):
     ordering_fields = ['date_joined', 'username', 'email', 'estado']
     ordering = ['-date_joined']
     
+    # ✅ AGREGAR: Método para cambiar serializer según la acción
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return RegisterSerializer  # Para creación con password
+        return UserSerializer  # Para lectura/lista
+    
     def get_queryset(self):
-        # ✅ CORREGIDO: QuerySet simple sin relaciones que puedan no existir
-        queryset = User.objects.all()
+        """
+        Solo Super Admins y usuarios SIN negocio asignado.
+        Los usuarios del negocio están en business_roles_businessuser.
+        """
+        from apps.business_roles.models import BusinessUser
         
-        # ✅ Búsqueda personalizada
+        # ✅ Filtrar: Super Admins O usuarios que NO son BusinessUser
+        queryset = User.objects.filter(
+            Q(is_superuser=True) | 
+            Q(is_super_admin=True) |
+            ~Q(id__in=BusinessUser.objects.values_list('user_id', flat=True))
+        ).distinct()
+        
+        # Búsqueda
         search = self.request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(
@@ -82,12 +116,21 @@ class UserListView(generics.ListAPIView):
                 Q(last_name__icontains=search)
             )
         
-        # ✅ Filtro por estado
-        estado = self.request.query_params.get('estado', None)
-        if estado:
-            queryset = queryset.filter(estado__iexact=estado)
-        
         return queryset
+    
+    def create(self, request, *args, **kwargs):
+        """Crear usuario del sistema (sin negocio asignado)"""
+        print(f"🔍 [CREATE] Request data: {request.data}")
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        print(f"✅ Usuario creado: {user.id} - {user.email}")
+        
+        # Retornar con UserSerializer para incluir business_memberships
+        read_serializer = UserSerializer(user, context={'request': request})
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
     
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -110,9 +153,17 @@ class UserListView(generics.ListAPIView):
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
     """CRUD completo de usuario - SOLO Super Admin"""
     queryset = User.objects.all()
-    serializer_class = UserDetailSerializer
+    serializer_class = UserDetailSerializer  # Por defecto para GET
     permission_classes = [IsAuthenticated, IsSuperAdmin]
     lookup_field = 'id'
+    
+    # ✅ CORREGIDO: Usar request.method en lugar de self.action
+    def get_serializer_class(self):
+        """Usar UserUpdateSerializer para actualizaciones"""
+        if self.request.method in ['PUT', 'PATCH']:
+            from .serializers import UserUpdateSerializer
+            return UserUpdateSerializer
+        return UserDetailSerializer
     
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -121,14 +172,15 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         
+        # Retornar con UserSerializer para incluir business_memberships
         return Response({
             'message': 'Usuario actualizado exitosamente.',
-            'user': serializer.data
+            'user': UserSerializer(serializer.instance, context={'request': request}).data
         })
     
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        # ✅ Soft delete: cambiar estado en lugar de eliminar
+        # Soft delete: cambiar estado en lugar de eliminar
         if hasattr(instance, 'estado'):
             instance.estado = 'ELIMINADO'
             instance.save(update_fields=['estado'])
@@ -136,3 +188,26 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
         
         self.perform_destroy(instance)
         return Response({'message': 'Usuario eliminado exitosamente.'})
+
+# ✅ AGREGAR: Vista para CREAR usuarios (POST /auth/users/)
+# =============================================================================
+class UserCreateView(generics.CreateAPIView):
+    """
+    Crear nuevo usuario - SOLO Super Admin
+    POST /auth/users/
+    """
+    serializer_class = RegisterSerializer  # Usa el serializer de registro con password
+    permission_classes = [IsAuthenticated, IsSuperAdmin]
+    
+    def create(self, request, *args, **kwargs):
+        print(f"🔍 [UserCreateView] Creating user with data: {request.data}")
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        # Retornar con UserSerializer para incluir business_memberships
+        read_serializer = UserSerializer(user, context={'request': request})
+        
+        print(f"✅ User created: {user.id} - {user.email}")
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)

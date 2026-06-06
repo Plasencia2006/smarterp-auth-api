@@ -12,10 +12,6 @@ User = get_user_model()
 # ✅ 1. SERIALIZER PARA LOGIN (JWT) - CON MEMBRESÍAS, ROLES Y PERMISOS
 # =============================================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """
-    Login con JWT - Incluye datos del usuario, negocios, roles y permisos
-    """
-    
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
@@ -26,105 +22,74 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        # Validar credenciales básicas
+        # Validar credenciales
         data = super().validate(attrs)
         user = self.user
         
-        # ✅ VALIDAR ESTADO DE LA CUENTA
+        # Validar estado
         estado = getattr(user, 'estado', 'ACTIVO').upper()
         is_active = getattr(user, 'is_active', True)
         
-        if not is_active:
+        if not is_active or estado in ['SUSPENDIDO', 'INACTIVO', 'ELIMINADO']:
             raise serializers.ValidationError({
-                'detail': 'La cuenta está desactivada. Contacta al administrador.'
+                'detail': f'La cuenta está {estado.lower()}. Contacta al administrador.'
             })
         
-        if estado == 'SUSPENDIDO':
-            raise serializers.ValidationError({
-                'detail': 'La cuenta está suspendida temporalmente.'
-            })
-        
-        if estado == 'INACTIVO':
-            raise serializers.ValidationError({
-                'detail': 'La cuenta está inactiva. Contacta al administrador.'
-            })
-        
-        if estado == 'ELIMINADO':
-            raise serializers.ValidationError({
-                'detail': 'Esta cuenta ha sido eliminada del sistema.'
-            })
-        
-        # ✅ EXTRAER ROLES Y PERMISOS REALES DEL USUARIO
+        # ✅ EXTRAER MEMBRESÍAS - CON OPTIMIZACIÓN
         from apps.business.models import Membership
-        from apps.business_roles.models import BusinessRole
+        from apps.business_roles.models import BusinessRole, BusinessPermission
         
         memberships_data = []
         all_permissions = []
         all_roles = []
 
-        # Buscar membresías activas del usuario
+        # Obtener membresías ACTIVAS
         memberships = Membership.objects.filter(
             user=user, 
             is_active=True
         ).select_related('business')
         
         for m in memberships:
-            # 1️⃣ Buscar roles asignados al usuario en este negocio
+            # Obtener roles del usuario
             user_roles = BusinessRole.objects.filter(
-                users=user, 
-                business=m.business
+                business=m.business,
+                user_assignments__business_user__user=user,
+                user_assignments__is_active=True
             ).prefetch_related('permissions')
             
             roles_serialized = []
             
             for role in user_roles:
                 perms = [
-                    {
-                        'code': p.code, 
-                        'name': p.name, 
-                        'module': p.module
-                    }
+                    {'code': p.code, 'name': p.name, 'module': p.module}
                     for p in role.permissions.all()
                 ]
                 roles_serialized.append({
                     'id': str(role.id),
                     'name': role.name,
-                    'description': role.description,
-                    'is_default': role.is_default,
                     'permissions': perms
                 })
                 all_permissions.extend(perms)
             
-            # 2️⃣ Si no tiene roles ManyToMany, usar el rol string de la membresía (Fallback)
-            if not user_roles and m.role:
-                default_role = BusinessRole.objects.filter(
-                    business=m.business, 
-                    name__iexact=m.role, 
-                    is_default=True
-                ).prefetch_related('permissions').first()
-                
-                if default_role:
-                    perms = [
-                        {
-                            'code': p.code, 
-                            'name': p.name, 
-                            'module': p.module
-                        }
-                        for p in default_role.permissions.all()
-                    ]
-                    roles_serialized.append({
-                        'id': str(default_role.id),
-                        'name': default_role.name,
-                        'description': default_role.description,
-                        'is_default': default_role.is_default,
-                        'permissions': perms
-                    })
-                    all_permissions.extend(perms)
-
+            # Si es ADMIN y no tiene roles, darle todos los permisos
+            if not user_roles and m.role and m.role.upper() == 'ADMIN':
+                all_perms = BusinessPermission.objects.all()
+                perms = [
+                    {'code': p.code, 'name': p.name, 'module': p.module}
+                    for p in all_perms
+                ]
+                roles_serialized.append({
+                    'id': None,
+                    'name': 'Administrador',
+                    'permissions': perms
+                })
+                all_permissions.extend(perms)
+            
+            # ⚠️ IMPORTANTE: Asegurar que business tenga ID
             memberships_data.append({
                 'id': str(m.id),
-                'business': str(m.business.id),
-                'business_name': m.business.name,
+                'business': str(m.business.id) if m.business else None,
+                'business_name': m.business.name if m.business else 'Sin nombre',
                 'membership_role': m.role,
                 'is_active': m.is_active,
                 'roles': roles_serialized
@@ -132,7 +97,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             
             all_roles.extend(roles_serialized)
 
-        # Eliminar duplicados de permisos (por código)
+        # Eliminar duplicados
         seen_codes = set()
         unique_permissions = []
         for perm in all_permissions:
@@ -140,24 +105,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 unique_permissions.append(perm)
                 seen_codes.add(perm['code'])
 
-        print(f"✅ [Login] Usuario {user.email} tiene {len(memberships_data)} negocios asignados")
-        print(f"✅ [Login] Total de roles: {len(all_roles)}")
-        print(f"✅ [Login] Total de permisos únicos: {len(unique_permissions)}")
-        
-        # ✅ CONSTRUIR RESPUESTA COMPLETA
+        # ✅ INCLUIR EN LA RESPUESTA
         data['user'] = {
             'id': str(user.id),
             'email': user.email,
             'username': user.username,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
+            'first_name': user.first_name or '',
+            'last_name': user.last_name or '',
             'is_super_admin': getattr(user, 'is_super_admin', False) or user.is_superuser,
             'estado': estado,
             'is_active': is_active,
-            'business_memberships': memberships_data,  # ← Para saber a qué negocios pertenece
-            'roles': all_roles,                        # ← Para saber qué roles tiene
-            'permissions': unique_permissions          # ← Para redirección y UI (CLAVE)
+            'business_memberships': memberships_data,  # ← ESTO DEBE TENER DATOS
+            'roles': all_roles,
+            'permissions': unique_permissions
         }
+        
+        # Debug
+        print(f"✅ [Login] {user.email} - Memberships: {len(memberships_data)}")
         
         return data
 
@@ -168,9 +132,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     """
     Serializador para crear nuevos usuarios.
-    Hashea la contraseña automáticamente usando create_user.
+    Hashea la contraseña automáticamente con create_user().
     """
-    password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
+    password = serializers.CharField(write_only=True, required=True)
     password_confirm = serializers.CharField(write_only=True, required=True)
 
     class Meta:
@@ -181,13 +145,47 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
+        # Validar que las contraseñas coincidan
         if attrs['password'] != attrs['password_confirm']:
             raise serializers.ValidationError({"password_confirm": "Las contraseñas no coinciden."})
+        
+        # ✅ IMPORTANTE: Eliminar password_confirm del validated_data
+        attrs.pop('password_confirm', None)
+        
         return attrs
 
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
-        return User.objects.create_user(**validated_data)
+        """
+        Crear usuario con contraseña hasheada.
+        ✅ USAR create_user() que hashea automáticamente
+        """
+        # Eliminar password_confirm si aún existe
+        validated_data.pop('password_confirm', None)
+        
+        # Obtener la contraseña
+        password = validated_data.pop('password', None)
+        
+        if not password:
+            raise serializers.ValidationError({"password": "La contraseña es requerida."})
+        
+        # ✅ create_user() YA HASHEA la contraseña automáticamente
+        user = User.objects.create_user(
+            username=validated_data.get('username'),
+            email=validated_data.get('email'),
+            password=password,  # ← Se hashea automáticamente
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            is_super_admin=validated_data.get('is_super_admin', False),
+            estado=validated_data.get('estado', 'ACTIVO'),
+            is_active=True
+        )
+        
+        print(f"✅ Usuario creado: {user.id} - {user.email}")
+        print(f"✅ Password hasheada: {user.password[:50]}...")
+        print(f"✅ Password is NULL: {user.password is None}")
+        
+        return user
+    
 
 
 # =============================================================================
@@ -199,18 +197,47 @@ class UserSerializer(serializers.ModelSerializer):
     NO incluye campos de escritura como password.
     """
     is_super_admin = serializers.SerializerMethodField()
+    # ✅ AGREGAR: Campo para las membresías del negocio
+    business_memberships = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name',
-            'is_active', 'estado', 'is_super_admin', 'date_joined', 'last_login'
+            'is_active', 'estado', 'is_super_admin', 'date_joined', 'last_login',
+            'business_memberships'  # ← Ya lo tenías, perfecto
         )
         read_only_fields = ('id', 'date_joined', 'last_login')
 
     def get_is_super_admin(self, obj):
         return getattr(obj, 'is_super_admin', False) or obj.is_superuser
 
+    # ✅ AGREGAR ESTE MÉTODO: Obtener membresías del usuario
+    def get_business_memberships(self, obj):
+        """
+        Obtener las membresías activas del usuario en los negocios.
+        Esto es CLAVE para que el frontend pueda filtrar Admins de Negocio.
+        """
+        from apps.business.models import Membership
+        
+        # Obtener membresías activas del usuario
+        memberships = Membership.objects.filter(
+            user=obj,
+            is_active=True
+        ).select_related('business')  # Optimización: evitar N+1 queries
+        
+        # Serializar las membresías
+        return [
+            {
+                'id': str(m.id),
+                'business': str(m.business.id),  # ID del negocio
+                'business_name': m.business.name,  # Nombre legible
+                'role': m.role,  # Rol en la membresía (ADMIN, VENDEDOR, etc.)
+                'membership_role': m.role,  # Alias para compatibilidad
+                'is_active': m.is_active
+            }
+            for m in memberships
+        ]
 
 # =============================================================================
 # ✅ 4. SERIALIZER PARA DETALLE DE PERFIL (/me/)

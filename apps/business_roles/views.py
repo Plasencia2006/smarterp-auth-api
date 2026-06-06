@@ -101,50 +101,57 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
             ).select_related('user', 'business').prefetch_related('role_assignments__role')
         return BusinessUser.objects.none()
 
+# apps/business_roles/views.py
+
     def create(self, request, *args, **kwargs):
-        """Crear usuario del negocio completo"""
+        """
+        Crear usuario del negocio.
+        - Si el usuario existe en CustomUser → Solo crear BusinessUser
+        - Si no existe → Crear CustomUser + BusinessUser
+        """
         admin_user = request.user
         business_id = get_user_business_id(admin_user)
         
         if not business_id:
-            return Response({'error': 'No tienes un negocio activo'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'error': 'No se pudo determinar el negocio'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        email = request.data.get('email')
         
         with transaction.atomic():
-            email = request.data.get('email')
-            if not email:
-                return Response({'error': 'Email es requerido'}, status=status.HTTP_400_BAD_REQUEST)
-            
+            # 1. Buscar o crear CustomUser (solo si no existe)
             custom_user = User.objects.filter(email=email).first()
             
             if not custom_user:
-                serializer = RegisterSerializer(data=request.data)
-                serializer.is_valid(raise_exception=True)
-                custom_user = serializer.save()
-            else:
-                if BusinessUser.objects.filter(user=custom_user, business_id=business_id).exists():
-                    return Response({'error': 'Usuario ya pertenece a este negocio'}, status=status.HTTP_400_BAD_REQUEST)
+                # Crear CustomUser básico (sin negocio)
+                custom_user = User.objects.create_user(
+                    username=email,  # Username = email
+                    email=email,
+                    password=request.data.get('password', 'temp_password_123'),
+                    first_name=request.data.get('first_name', ''),
+                    last_name=request.data.get('last_name', ''),
+                    is_active=True
+                )
             
-            # Sincronizar Membership para compatibilidad con Login/Token
-            Membership.objects.get_or_create(
+            # 2. Verificar si ya es BusinessUser de este negocio
+            if BusinessUser.objects.filter(user=custom_user, business_id=business_id).exists():
+                return Response({
+                    'error': 'El usuario ya pertenece a este negocio'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 3. Crear BusinessUser (aquí se asigna al negocio)
+            business_user = BusinessUser.objects.create(
                 user=custom_user,
                 business_id=business_id,
-                defaults={'role': 'USER', 'is_active': True}
+                employee_code=request.data.get('employee_code'),
+                department=request.data.get('department'),
+                position=request.data.get('position'),
+                hire_date=request.data.get('hire_date'),
+                is_active=True
             )
             
-            # Crear registro BusinessUser
-            business_user_data = {
-                'user': custom_user,
-                'business_id': business_id,
-                'employee_code': request.data.get('employee_code'),
-                'department': request.data.get('department'),
-                'position': request.data.get('position'),
-                'hire_date': request.data.get('hire_date'),
-            }
-            bu_serializer = BusinessUserSerializer(data=business_user_data)
-            bu_serializer.is_valid(raise_exception=True)
-            business_user = bu_serializer.save()
-            
-            # Asignar rol inicial si se envía
+            # 4. Asignar rol inicial si se especifica
             role_id = request.data.get('initial_role_id')
             if role_id:
                 try:
@@ -157,47 +164,97 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
                     )
                 except BusinessRole.DoesNotExist:
                     pass
-
-        return Response(BusinessUserSerializer(business_user).data, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['post'])
-    def assign_role(self, request, pk=None):
-        """Asignar rol a un BusinessUser"""
-        business_user = self.get_object()
-        role_id = request.data.get('role_id')
-        business_id = get_user_business_id(request.user)
         
-        if not role_id:
-            return Response({'error': 'Se requiere role_id'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(business_user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def update(self, request, *args, **kwargs):
+        """
+        Actualizar BusinessUser + CustomUser relacionado.
+        Maneja campos del BusinessUser, CustomUser y contraseña.
+        """
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
         
-        try:
-            role = BusinessRole.objects.get(id=role_id, business_id=business_id)
-            assignment = BusinessUserRoleAssignment.objects.create(
-                business_user=business_user,
-                role=role,
-                assigned_by=request.user,
-                notes=request.data.get('notes', '')
-            )
-            return Response(BusinessUserRoleAssignmentSerializer(assignment).data, status=status.HTTP_201_CREATED)
-        except BusinessRole.DoesNotExist:
-            return Response({'error': 'Rol no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        print(f"\n{'='*80}")
+        print(f"🔍 [UPDATE] BusinessUser ID: {instance.id}")
+        print(f"🔍 [UPDATE] CustomUser ID: {instance.user.id}")
+        print(f"🔍 [UPDATE] Request data: {request.data}")
+        print(f"{'='*80}\n")
+        
+        # ✅ PASO 1: Extraer y actualizar campos del CustomUser
+        user = instance.user
+        user_updated = False
+        
+        # first_name
+        first_name = request.data.get('first_name')
+        if first_name is not None and first_name != user.first_name:
+            user.first_name = first_name
+            user_updated = True
+            print(f"✅ [UPDATE] first_name actualizado: {first_name}")
+        
+        # last_name
+        last_name = request.data.get('last_name')
+        if last_name is not None and last_name != user.last_name:
+            user.last_name = last_name
+            user_updated = True
+            print(f"✅ [UPDATE] last_name actualizado: {last_name}")
+        
+        # email
+        email = request.data.get('email')
+        if email is not None and email != user.email:
+            from apps.authentication.models import CustomUser
+            if CustomUser.objects.filter(email=email).exclude(id=user.id).exists():
+                return Response({
+                    'error': 'Este email ya está en uso por otro usuario',
+                    'detail': {'email': ['Este email ya está registrado']}
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            user.email = email
+            user.username = email
+            user_updated = True
+            print(f"✅ [UPDATE] email actualizado: {email}")
+        
+        # ✅ PASO 2: Actualizar contraseña si se proporcionó
+        password = request.data.get('password')
+        if password and password.strip():
+            user.set_password(password)  # ← Hashea la contraseña
+            user_updated = True
+            print(f"✅ [UPDATE] Contraseña actualizada (hasheada)")
+        
+        # Guardar cambios del CustomUser
+        if user_updated:
+            user.save()
+            print(f"✅ [UPDATE] CustomUser guardado: {user.id}")
+        
+        # ✅ PASO 3: Actualizar campos del BusinessUser
+        business_data = request.data.copy()
+        business_data.pop('first_name', None)
+        business_data.pop('last_name', None)
+        business_data.pop('email', None)
+        business_data.pop('password', None)
+        business_data.pop('password_confirm', None)
+        
+        serializer = self.get_serializer(instance, data=business_data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        
+        print(f"✅ [UPDATE] Serializer validado: {serializer.validated_data}")
+        
+        self.perform_update(serializer)
+        
+        # ✅ PASO 4: Retornar respuesta
+        instance.refresh_from_db()
+        response_serializer = self.get_serializer(instance)
+        
+        print(f"✅ [UPDATE] Respuesta lista")
+        print(f"{'='*80}\n")
+        
+        return Response(response_serializer.data)
 
-    @action(detail=True, methods=['post'])
-    def revoke_role(self, request, pk=None):
-        """Revocar rol de un BusinessUser"""
-        business_user = self.get_object()
-        role_id = request.data.get('role_id')
-        
-        try:
-            assignment = BusinessUserRoleAssignment.objects.get(
-                business_user=business_user,
-                role_id=role_id,
-                is_active=True
-            )
-            assignment.revoke()
-            return Response({'message': 'Rol revocado correctamente'}, status=status.HTTP_200_OK)
-        except BusinessUserRoleAssignment.DoesNotExist:
-            return Response({'error': 'Asignación no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH - usa la misma lógica que update"""
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
 
 # =============================================================================
