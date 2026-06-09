@@ -106,8 +106,6 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """
         Crear usuario del negocio.
-        - Si el usuario existe en CustomUser → Solo crear BusinessUser
-        - Si no existe → Crear CustomUser + BusinessUser
         """
         admin_user = request.user
         business_id = get_user_business_id(admin_user)
@@ -119,14 +117,24 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
         
         email = request.data.get('email')
         
+        # ✅ OBTENER EL ROL DEL REQUEST (CAJERO, VENDEDOR, CONTADOR, etc.)
+        # Puede venir como 'role' o 'initial_role_id' o 'membership_role'
+        membership_role = (
+            request.data.get('membership_role') or 
+            request.data.get('role') or 
+            'USER'  # Solo si no se especifica
+        )
+        
+        print(f"🔍 [CREATE] Membership role recibido: {membership_role}")
+        print(f"🔍 [CREATE] Request data completo: {request.data}")
+        
         with transaction.atomic():
-            # 1. Buscar o crear CustomUser (solo si no existe)
+            # 1. Buscar o crear CustomUser
             custom_user = User.objects.filter(email=email).first()
             
             if not custom_user:
-                # Crear CustomUser básico (sin negocio)
                 custom_user = User.objects.create_user(
-                    username=email,  # Username = email
+                    username=email,
                     email=email,
                     password=request.data.get('password', 'temp_password_123'),
                     first_name=request.data.get('first_name', ''),
@@ -134,13 +142,13 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
                     is_active=True
                 )
             
-            # 2. Verificar si ya es BusinessUser de este negocio
+            # 2. Verificar si ya es BusinessUser
             if BusinessUser.objects.filter(user=custom_user, business_id=business_id).exists():
                 return Response({
                     'error': 'El usuario ya pertenece a este negocio'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 3. Crear BusinessUser (aquí se asigna al negocio)
+            # 3. Crear BusinessUser
             business_user = BusinessUser.objects.create(
                 user=custom_user,
                 business_id=business_id,
@@ -151,14 +159,33 @@ class BusinessUserViewSet(viewsets.ModelViewSet):
                 is_active=True
             )
             
-            # 4. Asignar rol inicial si se especifica
+            # ✅ 4. CREAR MEMBERSHIP CON EL ROL CORRECTO
+            from apps.business.models import Membership
+            
+            membership, created = Membership.objects.get_or_create(
+                user=custom_user,
+                business_id=business_id,
+                defaults={
+                    'role': membership_role.upper(),  # ← CAJERO, VENDEDOR, etc.
+                    'is_active': True
+                }
+            )
+            
+            if not created:
+                membership.role = membership_role.upper()
+                membership.is_active = True
+                membership.save()
+            
+            print(f"✅ [CREATE] Membership creada con role: {membership.role}")
+            
+            # 5. Asignar rol inicial si se especifica
             role_id = request.data.get('initial_role_id')
             if role_id:
                 try:
-                    role = BusinessRole.objects.get(id=role_id, business_id=business_id)
+                    role_obj = BusinessRole.objects.get(id=role_id, business_id=business_id)
                     BusinessUserRoleAssignment.objects.create(
                         business_user=business_user,
-                        role=role,
+                        role=role_obj,
                         assigned_by=admin_user,
                         notes=request.data.get('role_notes', '')
                     )

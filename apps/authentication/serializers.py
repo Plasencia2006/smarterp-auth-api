@@ -22,89 +22,139 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
     def validate(self, attrs):
-        # Validar credenciales
+        # Validar credenciales básicas (email/password)
         data = super().validate(attrs)
         user = self.user
         
-        # Validar estado
-        estado = getattr(user, 'estado', 'ACTIVO').upper()
-        is_active = getattr(user, 'is_active', True)
-        
-        if not is_active or estado in ['SUSPENDIDO', 'INACTIVO', 'ELIMINADO']:
+        # ✅ 1️⃣ VALIDAR: CustomUser.is_active (usuario global)
+        if not user.is_active:
             raise serializers.ValidationError({
-                'detail': f'La cuenta está {estado.lower()}. Contacta al administrador.'
+                'detail': 'Tu cuenta ha sido desactivada. Contacta al administrador.'
             })
         
-        # ✅ EXTRAER MEMBRESÍAS - CON OPTIMIZACIÓN
+        # ✅ 2️⃣ VALIDAR: estado del usuario
+        estado = getattr(user, 'estado', 'ACTIVO').upper()
+        if estado in ['SUSPENDIDO', 'INACTIVO', 'ELIMINADO']:
+            raise serializers.ValidationError({
+                'detail': f'Tu cuenta está {estado.lower()}. Contacta al administrador.'
+            })
+        
+        # ✅ 3️⃣ VALIDAR: Super Admin NO necesita memberships
+        is_super = getattr(user, 'is_super_admin', False) or user.is_superuser
+        
         from apps.business.models import Membership
         from apps.business_roles.models import BusinessRole, BusinessPermission
         
         memberships_data = []
-        all_permissions = []
         all_roles = []
-
-        # Obtener membresías ACTIVAS
-        memberships = Membership.objects.filter(
-            user=user, 
-            is_active=True
-        ).select_related('business')
+        all_permissions = []
         
-        for m in memberships:
-            # Obtener roles del usuario
-            user_roles = BusinessRole.objects.filter(
-                business=m.business,
-                user_assignments__business_user__user=user,
-                user_assignments__is_active=True
-            ).prefetch_related('permissions')
+        if is_super:
+            # ✅ SUPER ADMIN: No necesita memberships, tiene acceso total
+            print(f"✅ [Login] {user.email} - SUPER ADMIN detectado")
             
-            roles_serialized = []
+            # Darle todos los permisos del sistema
+            all_perms = BusinessPermission.objects.all()
+            unique_permissions = [
+                {'code': p.code, 'name': p.name, 'module': p.module}
+                for p in all_perms
+            ]
             
-            for role in user_roles:
-                perms = [
-                    {'code': p.code, 'name': p.name, 'module': p.module}
-                    for p in role.permissions.all()
-                ]
-                roles_serialized.append({
-                    'id': str(role.id),
-                    'name': role.name,
-                    'permissions': perms
+        else:
+            # ✅ USUARIO NORMAL: Validar memberships
+            memberships = Membership.objects.filter(
+                user=user, 
+                is_active=True
+            ).select_related('business')
+            
+            # Si NO tiene memberships activos, no puede iniciar sesión
+            if not memberships.exists():
+                # Verificar si tiene memberships pero están inactivos
+                has_inactive_membership = Membership.objects.filter(
+                    user=user, 
+                    is_active=False
+                ).exists()
+                
+                if has_inactive_membership:
+                    raise serializers.ValidationError({
+                        'detail': 'Tu acceso a este negocio ha sido desactivado. Contacta al administrador.'
+                    })
+                else:
+                    raise serializers.ValidationError({
+                        'detail': 'No tienes acceso a ningún negocio. Contacta al administrador.'
+                    })
+            
+            # ✅ 4️⃣ VALIDAR: BusinessUser.is_active (si existe)
+            from apps.business_roles.models import BusinessUser
+            
+            for membership in memberships:
+                try:
+                    business_user = BusinessUser.objects.get(
+                        user=user, 
+                        business=membership.business
+                    )
+                    if not business_user.is_active:
+                        raise serializers.ValidationError({
+                            'detail': f'Tu cuenta en {membership.business.name} está inactiva. Contacta al administrador.'
+                        })
+                except BusinessUser.DoesNotExist:
+                    # Si es solo un admin de negocio (no BusinessUser), está bien
+                    pass
+            
+            # Extraer memberships y roles
+            for m in memberships:
+                user_roles = BusinessRole.objects.filter(
+                    business=m.business,
+                    user_assignments__business_user__user=user,
+                    user_assignments__is_active=True
+                ).prefetch_related('permissions')
+                
+                roles_serialized = []
+                
+                for role in user_roles:
+                    perms = [
+                        {'code': p.code, 'name': p.name, 'module': p.module}
+                        for p in role.permissions.all()
+                    ]
+                    roles_serialized.append({
+                        'id': str(role.id),
+                        'name': role.name,
+                        'permissions': perms
+                    })
+                    all_permissions.extend(perms)
+                
+                if not user_roles and m.role and m.role.upper() == 'ADMIN':
+                    all_perms = BusinessPermission.objects.all()
+                    perms = [
+                        {'code': p.code, 'name': p.name, 'module': p.module}
+                        for p in all_perms
+                    ]
+                    roles_serialized.append({
+                        'id': None,
+                        'name': 'Administrador',
+                        'permissions': perms
+                    })
+                    all_permissions.extend(perms)
+                
+                memberships_data.append({
+                    'id': str(m.id),
+                    'business': str(m.business.id) if m.business else None,
+                    'business_name': m.business.name if m.business else 'Sin nombre',
+                    'membership_role': m.role,
+                    'is_active': m.is_active,
+                    'roles': roles_serialized
                 })
-                all_permissions.extend(perms)
+                
+                all_roles.extend(roles_serialized)
             
-            # Si es ADMIN y no tiene roles, darle todos los permisos
-            if not user_roles and m.role and m.role.upper() == 'ADMIN':
-                all_perms = BusinessPermission.objects.all()
-                perms = [
-                    {'code': p.code, 'name': p.name, 'module': p.module}
-                    for p in all_perms
-                ]
-                roles_serialized.append({
-                    'id': None,
-                    'name': 'Administrador',
-                    'permissions': perms
-                })
-                all_permissions.extend(perms)
-            
-            # ⚠️ IMPORTANTE: Asegurar que business tenga ID
-            memberships_data.append({
-                'id': str(m.id),
-                'business': str(m.business.id) if m.business else None,
-                'business_name': m.business.name if m.business else 'Sin nombre',
-                'membership_role': m.role,
-                'is_active': m.is_active,
-                'roles': roles_serialized
-            })
-            
-            all_roles.extend(roles_serialized)
-
-        # Eliminar duplicados
-        seen_codes = set()
-        unique_permissions = []
-        for perm in all_permissions:
-            if perm['code'] not in seen_codes:
-                unique_permissions.append(perm)
-                seen_codes.add(perm['code'])
-
+            # Eliminar duplicados
+            seen_codes = set()
+            unique_permissions = []
+            for perm in all_permissions:
+                if perm['code'] not in seen_codes:
+                    unique_permissions.append(perm)
+                    seen_codes.add(perm['code'])
+        
         # ✅ INCLUIR EN LA RESPUESTA
         data['user'] = {
             'id': str(user.id),
@@ -112,16 +162,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'username': user.username,
             'first_name': user.first_name or '',
             'last_name': user.last_name or '',
-            'is_super_admin': getattr(user, 'is_super_admin', False) or user.is_superuser,
+            'is_super_admin': is_super,
             'estado': estado,
-            'is_active': is_active,
-            'business_memberships': memberships_data,  # ← ESTO DEBE TENER DATOS
+            'is_active': user.is_active,
+            'business_memberships': memberships_data,
             'roles': all_roles,
-            'permissions': unique_permissions
+            'permissions': unique_permissions if is_super else unique_permissions
         }
         
-        # Debug
-        print(f"✅ [Login] {user.email} - Memberships: {len(memberships_data)}")
+        print(f"✅ [Login] {user.email} - Login exitoso")
+        print(f"✅ [Login] Is Super Admin: {is_super}")
+        print(f"✅ [Login] Memberships: {len(memberships_data)}")
+        print(f"✅ [Login] Permissions: {len(unique_permissions)}")
         
         return data
 
