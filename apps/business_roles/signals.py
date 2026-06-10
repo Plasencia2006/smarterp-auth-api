@@ -3,7 +3,7 @@ from django.dispatch import receiver
 
 @receiver(post_migrate)
 def create_default_business_roles(sender, **kwargs):
-    """Crear roles base después de migraciones (para negocios existentes)."""
+    """Crear roles base automáticamente después de ejecutar migraciones."""
     if sender.label != 'business_roles':
         return
 
@@ -12,12 +12,12 @@ def create_default_business_roles(sender, **kwargs):
         from apps.business.models import Business
 
         default_roles = [
-            {'name': 'Administrador', 'description': 'Gestiona toda la operación del negocio.', 'is_default': True},
-            {'name': 'Cajero', 'description': 'Realiza cobros, abre y cierra caja.', 'is_default': True},
-            {'name': 'Vendedor', 'description': 'Genera ventas y cotizaciones.', 'is_default': True},
-            {'name': 'Encargado de Inventario', 'description': 'Gestiona productos y stock.', 'is_default': True},
-            {'name': 'Contador', 'description': 'Genera facturas y reportes financieros.', 'is_default': True},
-            {'name': 'Soporte Técnico', 'description': 'Gestiona tickets y servicios.', 'is_default': True},
+            {'name': 'Administrador', 'description': 'Gestiona toda la operación del negocio. Aprueba compras, anula ventas, gestiona usuarios.', 'is_default': True},
+            {'name': 'Cajero', 'description': 'Realiza cobros, abre y cierra caja, procesa pagos.', 'is_default': True},
+            {'name': 'Vendedor', 'description': 'Genera ventas, crea cotizaciones, gestiona clientes.', 'is_default': True},
+            {'name': 'Encargado de Inventario', 'description': 'Gestiona productos, stock, compras y proveedores.', 'is_default': True},
+            {'name': 'Contador', 'description': 'Genera facturas, reportes financieros, conciliaciones.', 'is_default': True},
+            {'name': 'Soporte Técnico', 'description': 'Gestiona tickets de soporte, servicios y mantenimientos.', 'is_default': True},
         ]
 
         businesses = Business.objects.all()
@@ -28,7 +28,10 @@ def create_default_business_roles(sender, **kwargs):
                 _, created = BusinessRole.objects.get_or_create(
                     name=role_data['name'],
                     business=business,
-                    defaults={'description': role_data['description'], 'is_default': True}
+                    defaults={
+                        'description': role_data['description'],
+                        'is_default': role_data['is_default'],
+                    }
                 )
                 if created:
                     created_count += 1
@@ -39,13 +42,13 @@ def create_default_business_roles(sender, **kwargs):
             print(f"\nℹ️  [Signals] Los roles base ya existen para {businesses.count()} negocio(s)")
 
     except Exception as e:
-        print(f"❌ [Signals] Error: {e}")
+        print(f"❌ [Signals] Error creando roles base: {e}")
 
 
-# ✅ IMPORTANTE: Usar el sender correcto
-@receiver(post_save, sender='apps.business.Business')  # ← Cambiado de 'business.Business'
+# ✅ CORREGIDO: Usar 'app_label.ModelName' (no la ruta completa)
+@receiver(post_save, sender='business.Business')  # ← CORRECTO
 def create_roles_for_new_business(sender, instance, created, **kwargs):
-    """Crear roles base cuando se crea un NUEVO negocio."""
+    """Crear roles base automáticamente cuando se crea un NUEVO negocio."""
     if not created:
         return
 
@@ -53,22 +56,25 @@ def create_roles_for_new_business(sender, instance, created, **kwargs):
         from .models import BusinessRole
 
         default_roles = [
-            {'name': 'Administrador', 'description': 'Gestiona toda la operación del negocio.', 'is_default': True},
-            {'name': 'Cajero', 'description': 'Realiza cobros, abre y cierra caja.', 'is_default': True},
-            {'name': 'Vendedor', 'description': 'Genera ventas y cotizaciones.', 'is_default': True},
-            {'name': 'Encargado de Inventario', 'description': 'Gestiona productos y stock.', 'is_default': True},
-            {'name': 'Contador', 'description': 'Genera facturas y reportes financieros.', 'is_default': True},
-            {'name': 'Soporte Técnico', 'description': 'Gestiona tickets y servicios.', 'is_default': True},
+            {'name': 'Administrador', 'description': 'Gestiona toda la operación del negocio. Aprueba compras, anula ventas, gestiona usuarios.', 'is_default': True},
+            {'name': 'Cajero', 'description': 'Realiza cobros, abre y cierra caja, procesa pagos.', 'is_default': True},
+            {'name': 'Vendedor', 'description': 'Genera ventas, crea cotizaciones, gestiona clientes.', 'is_default': True},
+            {'name': 'Encargado de Inventario', 'description': 'Gestiona productos, stock, compras y proveedores.', 'is_default': True},
+            {'name': 'Contador', 'description': 'Genera facturas, reportes financieros, conciliaciones.', 'is_default': True},
+            {'name': 'Soporte Técnico', 'description': 'Gestiona tickets de soporte, servicios y mantenimientos.', 'is_default': True},
         ]
 
         for role_data in default_roles:
             BusinessRole.objects.get_or_create(
                 name=role_data['name'],
                 business=instance,
-                defaults={'description': role_data['description'], 'is_default': True}
+                defaults={
+                    'description': role_data['description'],
+                    'is_default': role_data['is_default'],
+                }
             )
 
         print(f"\n✅ [Signals] Roles base creados para nuevo negocio: {instance.name}")
 
     except Exception as e:
-        print(f"❌ [Signals] Error creando roles: {e}")
+        print(f"❌ [Signals] Error creando roles para nuevo negocio: {e}")
