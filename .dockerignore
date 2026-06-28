@@ -11,3 +11,17 @@ staticfiles
 media
 .vscode
 .idea
+*.md__pycache__
+*.pyc
+*.pyo
+.git
+.venv
+venv
+env
+.env
+*.sqlite3
+staticfiles
+media
+.vscode
+.idea
+*.md
