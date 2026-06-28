@@ -1,3 +1,8 @@
+"""
+Django Base Settings - Configuración compartida para todos los entornos
+Configurado para Railway con CORS abierto
+"""
+
 import pymysql
 pymysql.install_as_MySQLdb()
 
@@ -8,13 +13,47 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+# ============================================
+# 🔐 SECURITY CONFIGURATION
+# ============================================
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-smarterp-clave-secreta-2024-abc123xyz')
 DEBUG = config('DEBUG', default=True, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
-# 🔧 CSRF y Seguridad para Railway
+# ============================================
+# 🔓 CORS CONFIGURATION - ACEPTAR TODO
+# ============================================
+CORS_ALLOW_ALL_ORIGINS = True  # ← Permite peticiones desde cualquier origen
+CORS_ALLOW_CREDENTIALS = True  # ← Permite cookies y headers de autenticación
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-business-id',  # Header personalizado
+]
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+# ============================================
+# 🔒 CSRF CONFIGURATION
+# ============================================
 CSRF_TRUSTED_ORIGINS = [
     'https://smarterp-auth-api-production.up.railway.app',
+    'https://smarterp-frontend-production.up.railway.app',
     'https://*.up.railway.app',
     'https://*.railway.app',
 ]
@@ -36,6 +75,9 @@ X_FRAME_OPTIONS = 'DENY'
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
+# ============================================
+# 📦 APPLICATION DEFINITION
+# ============================================
 DJANGO_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -60,9 +102,13 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+# ============================================
+# 🔧 MIDDLEWARE CONFIGURATION
+# ============================================
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'corsheaders.middleware.CorsMiddleware',  # ← DEBE IR ANTES DE CommonMiddleware
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -70,7 +116,6 @@ MIDDLEWARE = [
     'apps.authentication.middleware.BusinessContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -94,9 +139,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+# ============================================
+# 👤 AUTHENTICATION
+# ============================================
 AUTH_USER_MODEL = 'authentication.CustomUser'
 
-# 🔧 Database configuration para Railway
+# ============================================
+# 🗄️ DATABASE CONFIGURATION
+# ============================================
 def get_database_config():
     # Intentar 1: MYSQL_URL (formato preferido de Railway)
     mysql_url = os.environ.get('MYSQL_URL') or os.environ.get('MYSQL_PUBLIC_URL')
@@ -107,7 +157,7 @@ def get_database_config():
             'default': dj_database_url.parse(mysql_url, conn_max_age=600)
         }
     
-    # Intentar 2: Variables individuales de Railway (sin underscore)
+    # Intentar 2: Variables individuales de Railway
     db_name = os.environ.get('MYSQLDATABASE') or os.environ.get('MYSQL_DATABASE') or config('DB_NAME', default='railway')
     db_user = os.environ.get('MYSQLUSER') or os.environ.get('MYSQL_USER') or config('DB_USER', default='root')
     db_password = os.environ.get('MYSQLPASSWORD') or os.environ.get('MYSQL_PASSWORD') or os.environ.get('MYSQL_ROOT_PASSWORD') or config('DB_PASSWORD', default='')
@@ -134,6 +184,9 @@ def get_database_config():
 
 DATABASES = get_database_config()
 
+# ============================================
+# 🔐 PASSWORD VALIDATION
+# ============================================
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -141,19 +194,25 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
+# ============================================
+# 🌍 INTERNATIONALIZATION
+# ============================================
 LANGUAGE_CODE = 'es-pe'
 TIME_ZONE = 'America/Lima'
 USE_I18N = True
 USE_TZ = True
 
+# ============================================
+# 📁 STATIC FILES
+# ============================================
 STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True
-
+# ============================================
+# 🔑 REST FRAMEWORK & JWT
+# ============================================
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -172,6 +231,18 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
-    'AUTH_HEADER_TYPES': ('Bearer',),
+    'UPDATE_LAST_LOGIN': True,
+    
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    
+    'AUTH_HEADER_TYPES': ('Bearer', 'JWT'),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    
     'TOKEN_OBTAIN_SERIALIZER': 'apps.authentication.serializers.CustomTokenObtainPairSerializer',
 }
