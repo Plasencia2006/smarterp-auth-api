@@ -1,27 +1,52 @@
-# Entorno virtual
-venv/
-myenv/
-
 # Python
-__pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
+*$py.class
 *.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Django
 *.log
 local_settings.py
-media/
-staticfiles/
+db.sqlite3
+db.sqlite3-journal
+/media
+/staticfiles
+/static
 
-# Variables de entorno - NUNCA subir a GitHub
+# Environment
 .env
+.venv
+.env.local
+.env.*.local
 
-# VS Code
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Windows
+# OS
+.DS_Store
 Thumbs.db
-Desktop.ini
+
+# Railway
+railway.json
