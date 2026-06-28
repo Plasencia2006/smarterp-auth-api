@@ -78,7 +78,7 @@ def get_database_config():
     # Intentar 1: MYSQL_URL (formato preferido de Railway)
     mysql_url = os.environ.get('MYSQL_URL') or os.environ.get('MYSQL_PUBLIC_URL')
     if mysql_url:
-        print(f"✅ Usando MYSQL_URL para conexión")
+        print(f" Usando MYSQL_URL para conexión")
         import dj_database_url
         return {
             'default': dj_database_url.parse(mysql_url, conn_max_age=600)
