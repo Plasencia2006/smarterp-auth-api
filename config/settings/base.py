@@ -1,10 +1,14 @@
+import pymysql
+pymysql.install_as_MySQLdb()
+
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
+import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = config('SECRET_KEY')
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-smarterp-clave-secreta-2024-abc123xyz')
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
@@ -68,19 +72,44 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 AUTH_USER_MODEL = 'authentication.CustomUser'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='3306'),
-        'OPTIONS': {
-            'charset': 'utf8mb4',
-        },
+# 🔧 Database configuration para Railway
+# Soporta ambos formatos: MYSQLDATABASE (Railway) y DB_NAME (.env local)
+def get_database_config():
+    # Intentar 1: MYSQL_URL (formato preferido de Railway)
+    mysql_url = os.environ.get('MYSQL_URL') or os.environ.get('MYSQL_PUBLIC_URL')
+    if mysql_url:
+        print(f"✅ Usando MYSQL_URL para conexión")
+        import dj_database_url
+        return {
+            'default': dj_database_url.parse(mysql_url, conn_max_age=600)
+        }
+    
+    # Intentar 2: Variables individuales de Railway (sin underscore)
+    db_name = os.environ.get('MYSQLDATABASE') or os.environ.get('MYSQL_DATABASE') or config('DB_NAME', default='railway')
+    db_user = os.environ.get('MYSQLUSER') or os.environ.get('MYSQL_USER') or config('DB_USER', default='root')
+    db_password = os.environ.get('MYSQLPASSWORD') or os.environ.get('MYSQL_PASSWORD') or os.environ.get('MYSQL_ROOT_PASSWORD') or config('DB_PASSWORD', default='')
+    db_host = os.environ.get('MYSQLHOST') or os.environ.get('MYSQL_HOST') or config('DB_HOST', default='localhost')
+    db_port = os.environ.get('MYSQLPORT') or os.environ.get('MYSQL_PORT') or config('DB_PORT', default='3306')
+    
+    print(f"✅ Usando variables individuales - DB: {db_name}, Host: {db_host}")
+    
+    return {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': db_name,
+            'USER': db_user,
+            'PASSWORD': db_password,
+            'HOST': db_host,
+            'PORT': db_port,
+            'OPTIONS': {
+                'charset': 'utf8mb4',
+                'connect_timeout': 10,
+            },
+            'CONN_MAX_AGE': 600,
+        }
     }
-}
+
+DATABASES = get_database_config()
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -95,6 +124,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ALLOW_ALL_ORIGINS = True
