@@ -246,3 +246,45 @@ SIMPLE_JWT = {
     
     'TOKEN_OBTAIN_SERIALIZER': 'apps.authentication.serializers.CustomTokenObtainPairSerializer',
 }
+
+# ============================================
+# 🔧 CORS FALLBACK - Middleware personalizado
+# ============================================
+class ForceCORSMiddleware:
+    """
+    Middleware que fuerza headers CORS en TODAS las respuestas.
+    Esto soluciona problemas cuando django-cors-headers no funciona correctamente.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        
+        # Forzar headers CORS en TODAS las respuestas
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Credentials'] = 'true'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Business-ID, X-Requested-With'
+        response['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+        response['Access-Control-Max-Age'] = '86400'
+        
+        # Manejar preflight requests (OPTIONS)
+        if request.method == 'OPTIONS':
+            response.status_code = 200
+            response.content = ''
+            
+        return response
+
+# Agregar middleware al inicio de la lista
+MIDDLEWARE.insert(0, 'config.settings.base.ForceCORSMiddleware')
+
+# ============================================
+# 🔧 DEBUG - Imprimir configuración CORS
+# ============================================
+print("=" * 80)
+print("🔧 DJANGO SETTINGS CARGADOS")
+print(f"✅ CORS_ALLOW_ALL_ORIGINS: {CORS_ALLOW_ALL_ORIGINS}")
+print(f"✅ CORS_ALLOW_CREDENTIALS: {CORS_ALLOW_CREDENTIALS}")
+print(f"✅ ALLOWED_HOSTS: {ALLOWED_HOSTS}")
+print(f"✅ DEBUG: {DEBUG}")
+print("=" * 80)
